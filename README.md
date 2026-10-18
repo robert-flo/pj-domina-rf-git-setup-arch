@@ -1,12 +1,12 @@
 # git-setup for Arch Linux
 
 An Arch Linux installation package for
-[git-setup](https://github.com/robert-flo/git-setup), built
+[git-setup](https://github.com/robert-flo/PJ-DOMINA-rf-git-setup), built
 with the same local PKGBUILD workflow used by AUR packages. Clone the package
 repository, inspect or adjust PKGBUILD if needed, then build a Pacman package
 on your machine. It is not published to AUR yet.
 
-Upstream project: [robert-flo/git-setup.git](https://github.com/robert-flo/git-setup.git)
+Upstream project: [robert-flo/PJ-DOMINA-rf-git-setup.git](https://github.com/robert-flo/PJ-DOMINA-rf-git-setup.git)
 
 The installed package provides the public git-setup command at
 /usr/bin/git-setup, keeps the private implementation under /opt/git-setup,
@@ -27,8 +27,8 @@ Clone this package repository, then choose either installation workflow.
 ### Standard Arch / AUR-Style Workflow
 
 ```shell
-git clone https://github.com/robert-flo/git-setup-arch.git
-cd git-setup-arch
+git clone https://github.com/robert-flo/PJ-DOMINA-rf-git-setup-arch.git
+cd PJ-DOMINA-rf-git-setup-arch
 makepkg -si
 ```
 
@@ -38,8 +38,8 @@ makepkg builds the Pacman package and -i installs it.
 ### Project Make Workflow
 
 ```shell
-git clone https://github.com/robert-flo/git-setup-arch.git
-cd git-setup-arch
+git clone https://github.com/robert-flo/PJ-DOMINA-rf-git-setup-arch.git
+cd PJ-DOMINA-rf-git-setup-arch
 make install
 ```
 
@@ -220,4 +220,4 @@ an AUR package repository and a dedicated SSH key.
 ## License
 
 The packaged source is released under the
-[source project's MIT License](https://github.com/robert-flo/git-setup/blob/master/LICENSE).
+[source project's MIT License](https://github.com/robert-flo/PJ-DOMINA-rf-git-setup/blob/master/LICENSE).

@@ -19,7 +19,7 @@ readonly PACKAGE_DIR
 readonly CONTAINER_SCRIPT="$SCRIPT_DIR/lib/container-validate.sh"
 PKG_VERSION="$(awk -F= '/^pkgver=/{print $2; exit}' "$PACKAGE_DIR/PKGBUILD")"
 readonly PKG_VERSION
-readonly PKG_ARCHIVE_PREFIX="git-setup-${PKG_VERSION}/"
+readonly PKG_ARCHIVE_PREFIX="PJ-DOMINA-rf-git-setup-${PKG_VERSION}/"
 
 # shellcheck disable=SC1091 # The library path is derived from this script's location.
 source "$SCRIPT_DIR/lib/host-checks.sh"

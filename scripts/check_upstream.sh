@@ -5,7 +5,7 @@
 
 set -Eeuo pipefail
 
-readonly UPSTREAM_REPO="${UPSTREAM_REPO:-robert-flo/git-setup}"
+readonly UPSTREAM_REPO="${UPSTREAM_REPO:-robert-flo/PJ-DOMINA-rf-git-setup}"
 readonly PKGBUILD_PATH="${PKGBUILD_PATH:-PKGBUILD}"
 readonly OUTPUT_FILE="${GITHUB_OUTPUT:-}"
 

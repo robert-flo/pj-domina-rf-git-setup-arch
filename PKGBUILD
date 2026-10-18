@@ -1,9 +1,9 @@
 pkgname=git-setup
 pkgver=0.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Configure Git, GitHub, SSH and GPG interactively'
 arch=('any')
-url='https://github.com/robert-flo/git-setup'
+url='https://github.com/robert-flo/PJ-DOMINA-rf-git-setup'
 license=('MIT')
 options=('!debug')
 depends=('git' 'github-cli' 'gnupg' 'openssh' 'git-delta')
@@ -12,12 +12,12 @@ source=(
   "${pkgname}"
 )
 sha256sums=(
-  '0e72ee6fb825b2352e2fd20ab4ddb5400ba316809afd9a9d6170ddf8f6ceea53'
+  '5f38287b47e9154e0997ad2abc0769c1f3dcbaacabc999d38226097f9cace6d1'
   'e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150'
 )
 
 package() {
-  local source_dir="${srcdir}/git-setup-${pkgver}"
+  local source_dir="${srcdir}/PJ-DOMINA-rf-git-setup-${pkgver}"
   local payload_dir="${pkgdir}/opt/${pkgname}"
 
   install -d "${payload_dir}"/{helper,lib,scripts,templates/git}
