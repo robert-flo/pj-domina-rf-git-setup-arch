@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_REPO: robert-flo/PJ-DOMINA-rf-git-setup
+  UPSTREAM_REPO: robert-flo/pj-domina-rf-git-setup
 
 jobs:
   update:
