@@ -69,6 +69,9 @@ deps_line="$(grep -n '      - name: Install build and runtime dependencies' "$WO
 version_line="$(grep -n '      - name: Compute the trackable version and generate the tarball' "$WORKFLOW" | cut -d: -f1)"
 [[ -n "$deps_line" && -n "$version_line" && "$deps_line" -lt "$version_line" ]] || \
   die 'the dependency install step must come before the version step (the base image has no git)'
+checkout_line="$(grep -n '      - name: Checkout the source at the dispatched commit' "$WORKFLOW" | cut -d: -f1)"
+[[ -n "$checkout_line" && "$deps_line" -lt "$checkout_line" ]] || \
+  die 'the dependency install step must come before the source checkout (the REST fallback leaves no history)'
 
 # PKGBUILD contract: the tag tarball and its fixed checksum are gone, the
 # generated tarball enters as a local source with SKIP, the launcher keeps

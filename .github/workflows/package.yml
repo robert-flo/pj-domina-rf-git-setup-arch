@@ -31,6 +31,17 @@ jobs:
     container:
       image: archlinux:base
     steps:
+      # Primer paso: archlinux:base no trae git, y sin git actions/checkout
+      # cae al fallback REST que baja el arbol sin historial (verificado en
+      # los logs del primer run real). El checkout de la fuente usa
+      # fetch-depth: 0 justamente para que git describe vea tags e
+      # historial, asi que necesita git antes de correr.
+      - name: Install build and runtime dependencies
+        run: |
+          set -euo pipefail
+
+          pacman -Syu --noconfirm base-devel git github-cli gnupg openssh git-delta
+
       - name: Checkout this package repository
         uses: actions/checkout@v4
 
@@ -58,12 +69,6 @@ jobs:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
           path: fuente
-
-      - name: Install build and runtime dependencies
-        run: |
-          set -euo pipefail
-
-          pacman -Syu --noconfirm base-devel git github-cli gnupg openssh git-delta
 
       - name: Compute the trackable version and generate the tarball
         id: version
