@@ -1,0 +1,152 @@
+name: Package from source dispatch
+
+# Empaquetado al vuelo del duo (spec despliegue-duo-arch-por-commit,
+# ticket 2): recibe {repo, sha} del repository_dispatch, genera el tarball
+# con git archive de ese sha y construye y prueba el paquete en un
+# contenedor Arch. workflow_dispatch permite repetirlo a mano para
+# dogfooding o rebuilds.
+
+on:
+  repository_dispatch:
+    types:
+      - source-updated
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Source repository (owner/name)
+        required: false
+        default: pj-domina-rf-git-setup
+      sha:
+        description: Source commit sha (empty = default branch HEAD)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and install-test the package in Arch
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base
+    steps:
+      - name: Checkout this package repository
+        uses: actions/checkout@v4
+
+      - name: Resolve the dispatched source
+        id: source
+        env:
+          DISPATCH_REPO: ${{ github.event.client_payload.repo }}
+          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+
+          repo="${DISPATCH_REPO:-${INPUT_REPO:-pj-domina-rf-git-setup}}"
+          sha="${DISPATCH_SHA:-${INPUT_SHA:-}}"
+          {
+            printf 'repo=%s\n' "${repo}"
+            printf 'sha=%s\n' "${sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout the source at the dispatched commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+          path: fuente
+
+      - name: Compute the trackable version and generate the tarball
+        id: version
+        env:
+          SRC_DIR: ${{ github.workspace }}/fuente
+          REF_SHA: ${{ steps.source.outputs.sha }}
+          PKG_BUILD: ${{ github.workspace }}/build
+        run: |
+          set -euo pipefail
+
+          full_sha="$(git -C "${SRC_DIR}" rev-parse "${REF_SHA:-HEAD}")"
+          shortsha="$(git -C "${SRC_DIR}" rev-parse --short=7 "${full_sha}")"
+
+          if desc="$(git -C "${SRC_DIR}" describe --long --tags "${full_sha}" 2>/dev/null)"; then
+            base="${desc%%-*}"
+            base="${base#v}"
+            count="${desc#*-}"
+            count="${count%%-*}"
+          else
+            # Sin tags: N = total de commits y la base es la del último
+            # release empaquetado.
+            base="0.2.0"
+            count="$(git -C "${SRC_DIR}" rev-list --count "${full_sha}")"
+          fi
+
+          pkgver="${base}.r${count}.${shortsha}"
+          tarball="${PKG_BUILD}/git-setup-${pkgver}.tar.gz"
+
+          mkdir -p "${PKG_BUILD}"
+          git -C "${SRC_DIR}" archive --format=tar.gz \
+            --prefix="pj-domina-rf-git-setup-${pkgver}/" \
+            "${full_sha}" > "${tarball}"
+
+          printf 'commit empaquetado: %s\n' "${full_sha}"
+          printf 'versión del paquete: %s\n' "${pkgver}"
+
+          {
+            printf 'pkgver=%s\n' "${pkgver}"
+            printf 'sha=%s\n' "${full_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Stage the build directory
+        env:
+          PKG_BUILD: ${{ github.workspace }}/build
+        run: |
+          set -euo pipefail
+
+          cp PKGBUILD git-setup "${PKG_BUILD}/"
+
+      - name: Install build and runtime dependencies
+        run: |
+          set -euo pipefail
+
+          pacman -Syu --noconfirm base-devel git github-cli gnupg openssh git-delta
+
+      - name: Build the package and install-test it
+        env:
+          PKG_BUILD: ${{ github.workspace }}/build
+          PKGVER: ${{ steps.version.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+
+          useradd --create-home builder
+          chown -R builder:builder "${PKG_BUILD}"
+          ( cd "${PKG_BUILD}" && su builder -c "PKGVER=${PKGVER} makepkg" )
+
+          pkg_files=( "${PKG_BUILD}"/git-setup-*.pkg.tar.zst )
+          if (( ${#pkg_files[@]} != 1 )) || [[ ! -e "${pkg_files[0]}" ]]; then
+            echo "no quedó exactamente un .pkg.tar.zst en ${PKG_BUILD}" >&2
+            exit 1
+          fi
+
+          pacman -U --noconfirm "${pkg_files[0]}"
+
+          test -x /usr/bin/git-setup
+          test -x /opt/git-setup/git-setup
+          for subdir in helper lib scripts templates/git; do
+            test -d "/opt/git-setup/${subdir}"
+            [[ -n "$(ls -A "/opt/git-setup/${subdir}")" ]] || {
+              echo "/opt/git-setup/${subdir} quedó vacío" >&2
+              exit 1
+            }
+          done
+          test -f /usr/share/applications/git-setup.desktop
+          echo "instalación verificada: /usr/bin/git-setup, /opt/git-setup y la desktop entry presentes"
+
+      - name: Upload the package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-setup-${{ steps.version.outputs.pkgver }}
+          path: build/*.pkg.tar.zst
+          if-no-files-found: error

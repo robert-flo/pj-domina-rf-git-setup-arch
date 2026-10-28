@@ -1,5 +1,9 @@
 pkgname=git-setup
-pkgver=0.2.0
+# La versión rastreable la calcula el job de CI (package.yml) y la entrega
+# por PKGVER: base.r<N>.<shortsha>, con N de `git describe --long` sobre el
+# sha empaquetado (sin tags, total de commits). Sin PKGVER, makepkg local
+# usa la base del último release empaquetado.
+pkgver="${PKGVER:-0.2.0}"
 pkgrel=2
 pkgdesc='Configure Git, GitHub, SSH and GPG interactively'
 arch=('any')
@@ -8,11 +12,11 @@ license=('MIT')
 options=('!debug')
 depends=('git' 'github-cli' 'gnupg' 'openssh' 'git-delta')
 source=(
-  "${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+  "${pkgname}-${pkgver}.tar.gz"
   "${pkgname}"
 )
 sha256sums=(
-  '9552fdd1e48922ee74c70b66bc0924234aa087562f1bdc9c51baace11eda8619'
+  'SKIP'
   'e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150'
 )
 
