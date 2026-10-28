@@ -59,6 +59,12 @@ jobs:
           fetch-depth: 0
           path: fuente
 
+      - name: Install build and runtime dependencies
+        run: |
+          set -euo pipefail
+
+          pacman -Syu --noconfirm base-devel git github-cli gnupg openssh git-delta
+
       - name: Compute the trackable version and generate the tarball
         id: version
         env:
@@ -106,12 +112,6 @@ jobs:
           set -euo pipefail
 
           cp PKGBUILD git-setup "${PKG_BUILD}/"
-
-      - name: Install build and runtime dependencies
-        run: |
-          set -euo pipefail
-
-          pacman -Syu --noconfirm base-devel git github-cli gnupg openssh git-delta
 
       - name: Build the package and install-test it
         env:

@@ -47,6 +47,7 @@ extract_run() {
 # package.yml structure: dispatch trigger, Arch container, checkout at the
 # payload sha, git archive of that sha, install test, artifact upload.
 have 'repository_dispatch:'
+have 'Checkout this package repository'
 have 'source-updated'
 have 'image: archlinux:base'
 have 'repository: ${{ steps.source.outputs.repo }}'
@@ -61,6 +62,13 @@ have '/usr/share/applications/git-setup.desktop'
 have 'actions/upload-artifact@v4'
 have 'path: build/*.pkg.tar.zst'
 have 'if-no-files-found: error'
+
+# El orden importa: archlinux:base no trae git ni makepkg, así que las
+# dependencias se instalan antes del primer paso que los usa.
+deps_line="$(grep -n '      - name: Install build and runtime dependencies' "$WORKFLOW" | cut -d: -f1)"
+version_line="$(grep -n '      - name: Compute the trackable version and generate the tarball' "$WORKFLOW" | cut -d: -f1)"
+[[ -n "$deps_line" && -n "$version_line" && "$deps_line" -lt "$version_line" ]] || \
+  die 'the dependency install step must come before the version step (the base image has no git)'
 
 # PKGBUILD contract: the tag tarball and its fixed checksum are gone, the
 # generated tarball enters as a local source with SKIP, the launcher keeps
