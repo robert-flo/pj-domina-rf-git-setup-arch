@@ -95,13 +95,16 @@ grep -qF 'e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150' "$PA
 grep -qF 'source_dir="${srcdir}/pj-domina-rf-git-setup-${pkgver}"' "$PACKAGE_DIR/PKGBUILD" || \
   die 'package() no longer matches the tarball layout'
 
-# .SRCINFO is regenerated to the same contract.
+# .SRCINFO is regenerated to the same contract. El .SRCINFO sangra con
+# tab: el patrón genera el tab con $'\t' para no depender de un tab
+# literal en este archivo.
 miss 'archive/refs/tags' "$PACKAGE_DIR/.SRCINFO" '.SRCINFO still references the tag tarball'
-grep -qE '^\tpkgver = 0\.2\.0$' "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO pkgver is not the 0.2.0 base'
-grep -qE '^\tsource = git-setup-0\.2\.0\.tar\.gz$' "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO missing the generated tarball source'
-grep -qE '^\tsource = git-setup$' "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO missing the launcher source'
-grep -qE '^\tsha256sums = SKIP$' "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO does not skip the tarball checksum'
-grep -qE '^\tsha256sums = e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150$' "$PACKAGE_DIR/.SRCINFO" || \
+srcinfo_lead=$'\t'
+grep -qE "^${srcinfo_lead}pkgver = 0\.2\.0$" "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO pkgver is not the 0.2.0 base'
+grep -qE "^${srcinfo_lead}source = git-setup-0\.2\.0\.tar\.gz$" "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO missing the generated tarball source'
+grep -qE "^${srcinfo_lead}source = git-setup$" "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO missing the launcher source'
+grep -qE "^${srcinfo_lead}sha256sums = SKIP$" "$PACKAGE_DIR/.SRCINFO" || die '.SRCINFO does not skip the tarball checksum'
+grep -qE "^${srcinfo_lead}sha256sums = e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150$" "$PACKAGE_DIR/.SRCINFO" || \
   die '.SRCINFO lost the launcher checksum'
 
 # Version derivation against real git fixtures.
