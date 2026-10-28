@@ -146,7 +146,10 @@ expected="0.2.0.r3.$(git -C "$tagged" rev-parse --short=7 HEAD)"
 [[ $sha == "$(git -C "$tagged" rev-parse HEAD)" ]] || die 'the reported sha is not the packaged commit'
 tarball="$TEST_ROOT/build/git-setup-${pkgver}.tar.gz"
 [[ -s "$tarball" ]] || die "the tarball was not generated: $tarball"
-tar -tzf "$tarball" | head -1 | grep -qF "pj-domina-rf-git-setup-${pkgver}/" || \
+# El listing va a un archivo: tar | head -1 con pipefail muere por SIGPIPE
+# de forma esporádica cuando head cierra el pipe antes de que tar termine.
+tar -tzf "$tarball" > "$TEST_ROOT/tarball.listing" 2>/dev/null
+head -1 "$TEST_ROOT/tarball.listing" | grep -qF "pj-domina-rf-git-setup-${pkgver}/" || \
   die 'the tarball root does not match the package() layout'
 
 # Untagged fixture: no tags, so N is the total number of commits.
@@ -321,5 +324,235 @@ grep -qF 'runtime/commands.tsv' "$PACKAGE_DIR/PKGBUILD" || \
   die 'PKGBUILD does not ship runtime/commands.tsv in the payload'
 grep -qF 'runtime/completion' "$PACKAGE_DIR/PKGBUILD" || \
   die 'PKGBUILD does not ship runtime/completion in the payload'
+
+# ---------------------------------------------------------------------- #
+# Publicación en la nube (ticket 3): el paquete entra al canal stable de  #
+# gh-pages con bin/publish-artifact contra un remote rclone local (el     #
+# patrón de release-personal.yml), poda de los últimos N por pkgname con  #
+# bin/unpublish-packages como mecanismo del db, e issue automático ante   #
+# fallo.                                                                  #
+# ---------------------------------------------------------------------- #
+publish_checks() { # publish_checks <workflow-path>
+  local wf="$1"
+  grep -qF "repository: robert-flo/omarchy-pkgs" "$wf" || return 1
+  grep -qF "ref: personal" "$wf" || return 1
+  grep -qF "repository: robert-flo/omarchy-personal-repo" "$wf" || return 1
+  grep -qF "ref: gh-pages" "$wf" || return 1
+  grep -qF 'ssh-key: ${{ secrets.SSH_DEPLOY_KEY }}' "$wf" || return 1
+  grep -qF 'bin/publish-artifact --remote' "$wf" || return 1
+  grep -qF -- '--mirror stable --arch x86_64' "$wf" || return 1
+  grep -qF 'bin/unpublish-packages' "$wf" || return 1
+  grep -qF 'PRUNE_KEEP_N:-5' "$wf" || return 1
+  grep -qF "github.event_name == 'repository_dispatch'" "$wf" || return 1
+  grep -qF 'secrets.GPG_PRIVATE_KEY' "$wf" || return 1
+  grep -qF 'secrets.GPG_PASSPHRASE' "$wf" || return 1
+  grep -qF 'ready-for-agent' "$wf" || return 1
+  grep -qF 'omarchy-personal.db' "$wf" || return 1
+  grep -qF 'omarchy.db.sig' "$wf" || return 1
+  grep -qF 'issues: write' "$wf" || return 1
+  grep -qF 'actions: read' "$wf" || return 1
+  grep -qF 'concurrency:' "$wf" || return 1
+  local a b c d e f
+  a="$(grep -n '      - name: Upload the package artifact' "$wf" | cut -d: -f1)"
+  b="$(grep -n '      - name: Install the publish tooling' "$wf" | cut -d: -f1)"
+  c="$(grep -n '      - name: Publish the package into the stable channel' "$wf" | cut -d: -f1)"
+  d="$(grep -n '      - name: Prune the channel to the last N packages' "$wf" | cut -d: -f1)"
+  e="$(grep -n '      - name: Sign the databases and push gh-pages' "$wf" | cut -d: -f1)"
+  f="$(grep -n '      - name: Open the failure issue' "$wf" | cut -d: -f1)"
+  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" && -n "$e" && -n "$f" ]] || return 1
+  (( a < b && b < c && c < d && d < e && e < f )) || return 1
+  return 0
+}
+publish_checks "$WORKFLOW" || die 'package.yml does not match the publish-to-personal-repo contract'
+
+# El dogfooding por workflow_dispatch no publica: el gate vive en cada paso
+# de publicación.
+grep -qxF "        if: github.event_name == 'repository_dispatch'" "$WORKFLOW" || \
+  die "publish steps are missing the repository_dispatch gate"
+
+# Mutación: un publish que no usa el mecanismo elegido (publish-artifact)   #
+# debe morir en el check.                                                  #
+sed 's|bash omarchy-pkgs/bin/publish-artifact --remote|bash omarchy-pkgs/bin/otro-mecanismo --remote|' \
+  "$WORKFLOW" > "$TEST_ROOT/package.mutated-publish.yml"
+expect_fail 'publish sin publish-artifact' publish_checks "$TEST_ROOT/package.mutated-publish.yml"
+
+# Los pasos de publicación y el issue de fallo son bash válido.
+for step in 'Publish the package into the stable channel' \
+            'Prune the channel to the last N packages' \
+            'Sign the databases and push gh-pages' \
+            'Collect the failure log' \
+            'Open the failure issue'; do
+  script="$TEST_ROOT/step.sh"
+  extract_run "$step" > "$script"
+  [[ -s "$script" ]] || die "could not extract the step from package.yml: $step"
+  bash -n "$script" || die "the extracted step is not valid bash: $step"
+done
+
+# Poda funcional: contra un canal de juguete con db de verdad (tar con      #
+# desc), la ventana N conserva los últimos y el db manda: un archivo que el #
+# db todavía sirve no se toca; si la poda lo tocaría, la reparación corre   #
+# bin/unpublish-packages y re-agrega la más nueva con bin/publish-artifact. #
+prune_script="$TEST_ROOT/prune.sh"
+extract_run 'Prune the channel to the last N packages' > "$prune_script"
+[[ -s "$prune_script" ]] || die 'could not extract the prune step from package.yml'
+
+# Stubs del toolkit de omarchy-pkgs (offline): registran la llamada y el    #
+# publish-artifact del stub emula el repo-add reescribiendo el db.          #
+ws="$TEST_ROOT/ws"
+mkdir -p "$ws/omarchy-pkgs/bin"
+stub_log="$TEST_ROOT/stub.log"
+: > "$stub_log"
+cat > "$ws/omarchy-pkgs/bin/unpublish-packages" <<'STUB'
+#!/usr/bin/env bash
+echo "$(basename "$0") $*" >> "$STUB_LOG"
+STUB
+cat > "$ws/omarchy-pkgs/bin/publish-artifact" <<'STUB'
+#!/usr/bin/env bash
+echo "$(basename "$0") $*" >> "$STUB_LOG"
+remote=""
+pkgfile=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --remote) remote="$2"; shift 2 ;;
+    --mirror|--arch) shift 2 ;;
+    *) pkgfile="$1"; shift ;;
+  esac
+done
+[[ -n "$remote" && -n "$pkgfile" && -f "$pkgfile" ]] || exit 1
+db="$remote/stable/x86_64/omarchy.db.tar.zst"
+dir="$(mktemp -d)"
+for other in "$pkgfile" $STUB_OTHER; do
+  entry="$(basename "$other")"
+  entry="${entry%.pkg.tar.zst}"
+  mkdir -p "$dir/$entry"
+  printf '%%FILENAME%%\n%s\n' "$(basename "$other")" > "$dir/$entry/desc"
+done
+( cd "$dir" && find . -name desc | sed 's|^\./||' | tar -cf "$db" -T - )
+rm -rf "$dir"
+STUB
+
+make_db() { # make_db <db_path> <filename servido>...
+  local db="$1"; shift
+  local dir="$TEST_ROOT/db-build"
+  rm -rf "$dir"; mkdir -p "$dir"
+  local f entry
+  for f in "$@"; do
+    entry="${f%.pkg.tar.zst}"
+    mkdir -p "$dir/$entry"
+    printf '%%FILENAME%%\n%s\n' "$f" > "$dir/$entry/desc"
+  done
+  ( cd "$dir" && find . -name desc | sed 's|^\./||' | tar -cf "$db" -T - )
+}
+
+make_channel() { # make_channel <channel_dir> <filename servido por el db>...
+  local channel="$1"; shift
+  rm -rf "$channel"; mkdir -p "$channel"
+  local i f
+  for i in 1 2 3 4 5 6 7; do
+    f="git-setup-0.3.0.r${i}.aaaaaaa-3-x86_64.pkg.tar.zst"
+    : > "$channel/$f"
+    : > "$channel/$f.sig"
+  done
+  : > "$channel/omarchy-4.0.6-109-x86_64.pkg.tar.zst"
+  : > "$channel/omarchy-4.0.6-109-x86_64.pkg.tar.zst.sig"
+  make_db "$channel/omarchy.db.tar.zst" "$@"
+}
+
+run_prune() { # run_prune <script> <repo_dir> <keep_n> <pkgname>
+  local script="$1" repo_dir="$2" keep="$3" pkgname="$4"
+  (
+    set -Eeuo pipefail
+    cd "$ws"
+    STUB_LOG="$stub_log" STUB_OTHER='omarchy-4.0.6-109-x86_64.pkg.tar.zst' \
+      REPO_DIR="$repo_dir" PKG_NAMES="$pkgname" PKG_BASES="$pkgname" PRUNE_KEEP_N="$keep" \
+      bash "$script"
+  )
+}
+
+db_served_exists() { # db_served_exists <channel>: todo archivo que el db sirve está en el árbol
+  local channel="$1" f
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    [[ -f "$channel/$f" ]] || return 1
+  done < <(tar -xO -f "$channel/omarchy.db.tar.zst" --wildcards '*/desc' \
+             | awk '/^%FILENAME%$/{getline; print}')
+  return 0
+}
+
+count_versions() { # count_versions <channel> <pkgname>
+  local f count=0
+  local re="^$2-.*\.r[0-9]+\.[0-9a-f]+-[0-9]+-[a-z0-9_]+\.pkg\.tar\.zst$"
+  for f in "$1"/*.pkg.tar.zst; do
+    [[ -e "$f" ]] || continue
+    if [[ "$(basename "$f")" =~ $re ]]; then count=$(( count + 1 )); fi
+  done
+  printf '%s\n' "$count"
+}
+
+# Caso A (normal): el db sirve la más nueva; la poda borra las 2 más viejas
+# y no llama al toolkit del db (repo-add ya deja una entrada por pkgname).
+repo_a="$TEST_ROOT/repo-a"
+make_channel "$repo_a/stable/x86_64" \
+  'git-setup-0.3.0.r7.aaaaaaa-3-x86_64.pkg.tar.zst' \
+  'omarchy-4.0.6-109-x86_64.pkg.tar.zst'
+: > "$stub_log"
+run_prune "$prune_script" "$repo_a" 5 git-setup
+channel_a="$repo_a/stable/x86_64"
+[[ "$(count_versions "$channel_a" git-setup)" == 5 ]] || \
+  die "poda normal: esperaba 5 git-setup, quedaron $(count_versions "$channel_a" git-setup)"
+[[ -e "$channel_a/git-setup-0.3.0.r3.aaaaaaa-3-x86_64.pkg.tar.zst" ]] || die 'poda normal: r3 se fue de más'
+[[ -e "$channel_a/git-setup-0.3.0.r3.aaaaaaa-3-x86_64.pkg.tar.zst.sig" ]] || die 'poda normal: la firma de r3 se fue'
+[[ ! -e "$channel_a/git-setup-0.3.0.r1.aaaaaaa-3-x86_64.pkg.tar.zst" ]] || die 'poda normal: r1 sobrevivió'
+[[ ! -e "$channel_a/git-setup-0.3.0.r2.aaaaaaa-3-x86_64.pkg.tar.zst.sig" ]] || die 'poda normal: la firma de r2 sobrevivió'
+[[ -e "$channel_a/omarchy-4.0.6-109-x86_64.pkg.tar.zst" ]] || die 'poda: tocó un paquete ajeno'
+db_served_exists "$channel_a" || die 'poda normal: el db quedó sirviendo un archivo que ya no está'
+[[ ! -s "$stub_log" ]] || die "poda normal no debió llamar al toolkit del db: $(cat "$stub_log")"
+
+# Caso B (reparación): el db sirve una versión vieja (estado anómalo); la
+# poda la protegería para siempre, así que retira la entrada con
+# bin/unpublish-packages y re-agrega la más nueva con bin/publish-artifact.
+repo_b="$TEST_ROOT/repo-b"
+make_channel "$repo_b/stable/x86_64" \
+  'git-setup-0.3.0.r2.aaaaaaa-3-x86_64.pkg.tar.zst' \
+  'omarchy-4.0.6-109-x86_64.pkg.tar.zst'
+: > "$stub_log"
+run_prune "$prune_script" "$repo_b" 5 git-setup
+channel_b="$repo_b/stable/x86_64"
+[[ "$(count_versions "$channel_b" git-setup)" == 5 ]] || \
+  die "reparación: esperaba 5 git-setup, quedaron $(count_versions "$channel_b" git-setup)"
+[[ ! -e "$channel_b/git-setup-0.3.0.r2.aaaaaaa-3-x86_64.pkg.tar.zst" ]] || die 'reparación: r2 quedó en el árbol'
+grep -q 'unpublish-packages' "$stub_log" || die 'la reparación no corrió bin/unpublish-packages'
+grep -q 'publish-artifact' "$stub_log" || die 'la reparación no re-agregó la versión nueva'
+db_served_exists "$channel_b" || die 'reparación: el db quedó sirviendo un archivo que ya no está'
+
+# Mutación (poda que borra de más): sin reparación y sin guardia, la poda
+# borra el archivo que el db todavía sirve y el check del db lo detecta.
+prune_bad="$TEST_ROOT/prune-bad.sh"
+sed -e 's/^  if \[\[ -n "\$danger" \]\]; then$/  if false; then/' \
+    -e 's/^    if grep -qxF "\$f" <<<"\$db_files"; then$/    if false; then/' \
+    "$prune_script" > "$prune_bad"
+grep -qF 'if false; then' "$prune_bad" || die 'la mutación de la poda no se aplicó al fixture'
+repo_c="$TEST_ROOT/repo-c"
+make_channel "$repo_c/stable/x86_64" \
+  'git-setup-0.3.0.r2.aaaaaaa-3-x86_64.pkg.tar.zst' \
+  'omarchy-4.0.6-109-x86_64.pkg.tar.zst'
+: > "$stub_log"
+run_prune "$prune_bad" "$repo_c" 5 git-setup || die 'la mutación de la poda no llegó a ejecutarse'
+expect_fail 'una poda que borra de más deja el db sirviendo un archivo borrado' \
+  db_served_exists "$repo_c/stable/x86_64"
+
+# Mutación (default de la ventana): si el N default deja de ser 5, la poda
+# conserva menos de lo prometido y el check del conteo lo detecta.
+prune_n3="$TEST_ROOT/prune-n3.sh"
+sed 's/PRUNE_KEEP_N:-5/PRUNE_KEEP_N:-3/' "$prune_script" > "$prune_n3"
+grep -qF 'PRUNE_KEEP_N:-3' "$prune_n3" || die 'la mutación del N default no se aplicó al fixture'
+repo_d="$TEST_ROOT/repo-d"
+make_channel "$repo_d/stable/x86_64" \
+  'git-setup-0.3.0.r7.aaaaaaa-3-x86_64.pkg.tar.zst' \
+  'omarchy-4.0.6-109-x86_64.pkg.tar.zst'
+: > "$stub_log"
+run_prune "$prune_n3" "$repo_d" 3 git-setup
+[[ "$(count_versions "$repo_d/stable/x86_64" git-setup)" == 3 ]] || \
+  die 'la mutación del N default no cambió la ventana'
 
 printf '%s\n' 'ok package-workflow'

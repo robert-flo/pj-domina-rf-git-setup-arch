@@ -23,10 +23,17 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  actions: read
 
 jobs:
   package:
     name: Build and install-test the package in Arch
+    # Dos dispatches no deben pisarse el push a gh-pages: la fila
+    # serializa los runs del repo.
+    concurrency:
+      group: package-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     container:
       image: archlinux:base
@@ -168,3 +175,226 @@ jobs:
           name: git-setup-${{ steps.version.outputs.pkgver }}
           path: build/*.pkg.tar.zst
           if-no-files-found: error
+
+      # ------------------------------------------------------------------ #
+      # Publicación en la nube (ticket 3): el paquete construido e          #
+      # instalado entra al canal stable del repo personal (gh-pages de      #
+      # omarchy-personal-repo) con el toolkit de omarchy-pkgs:              #
+      # bin/publish-artifact contra un remote rclone local, el mismo patrón #
+      # que release-personal.yml corre en producción. La poda mantiene los  #
+      # últimos N paquetes por pkgname (N=5) y bin/unpublish-packages       #
+      # retira del db lo que la poda ya no sirve. Credenciales solo en      #
+      # secrets de este repo: SSH_DEPLOY_KEY (deploy key de                 #
+      # omarchy-personal-repo), GPG_PRIVATE_KEY y GPG_PASSPHRASE (la clave  #
+      # de firma del repo). Publica repository_dispatch (commit con CI      #
+      # verde en la default de la fuente); el dogfooding por                #
+      # workflow_dispatch construye e instala pero NO publica.              #
+      # ------------------------------------------------------------------ #
+      - name: Install the publish tooling
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          set -euo pipefail
+
+          pacman -S --noconfirm --needed rclone zstd
+
+      - name: Checkout the omarchy-pkgs publish tooling
+        if: github.event_name == 'repository_dispatch'
+        uses: actions/checkout@v4
+        with:
+          repository: robert-flo/omarchy-pkgs
+          ref: personal
+          path: omarchy-pkgs
+
+      - name: Checkout the personal repo (gh-pages)
+        if: github.event_name == 'repository_dispatch'
+        uses: actions/checkout@v4
+        with:
+          repository: robert-flo/omarchy-personal-repo
+          ref: gh-pages
+          path: repo
+          ssh-key: ${{ secrets.SSH_DEPLOY_KEY }}
+
+      - name: Publish the package into the stable channel
+        id: publish
+        if: github.event_name == 'repository_dispatch'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          pkg_files=( build/*.pkg.tar.zst )
+          if (( ${#pkg_files[@]} != 1 )) || [[ ! -e "${pkg_files[0]}" ]]; then
+            echo "no quedó exactamente un .pkg.tar.zst para publicar" >&2
+            exit 1
+          fi
+          pkgfile="${pkg_files[0]}"
+          pkgname="$(bsdtar -xOf "$pkgfile" .PKGINFO | awk -F' = ' '$1=="pkgname"{print $2; exit}')"
+          pkgbase="$(bsdtar -xOf "$pkgfile" .PKGINFO | awk -F' = ' '$1=="pkgbase"{print $2; exit}')"
+          pkgbase="${pkgbase:-$pkgname}"
+          [[ -n "$pkgname" ]] || { echo "el .PKGINFO no trae pkgname" >&2; exit 1; }
+
+          bash omarchy-pkgs/bin/publish-artifact --remote "$GITHUB_WORKSPACE/repo" --mirror stable --arch x86_64 "$pkgfile"
+
+          {
+            printf 'pkgname=%s\n' "$pkgname"
+            printf 'pkgbase=%s\n' "$pkgbase"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Prune the channel to the last N packages
+        if: github.event_name == 'repository_dispatch'
+        env:
+          REPO_DIR: ${{ github.workspace }}/repo
+          PKG_NAMES: ${{ steps.publish.outputs.pkgname }}
+          PKG_BASES: ${{ steps.publish.outputs.pkgbase }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          REPO_DIR="${REPO_DIR:?}"
+          PKG_NAMES="${PKG_NAMES:?}"
+          PKG_BASES="${PKG_BASES:?}"
+          KEEP_N="${PRUNE_KEEP_N:-5}"
+          CHANNEL="$REPO_DIR/stable/x86_64"
+          DB="$CHANNEL/omarchy.db.tar.zst"
+          [[ -f "$DB" ]] || { echo "no hay db en $DB" >&2; exit 1; }
+          [[ $KEEP_N =~ ^[0-9]+$ ]] || { echo "PRUNE_KEEP_N no es un número: $KEEP_N" >&2; exit 1; }
+
+          db_filenames() {
+            # GNU tar autodetecta la compresión del db (zstd en el canal
+            # real; el fixture gzip del test también la resuelve).
+            tar -xO -f "$DB" --wildcards '*/desc' 2>/dev/null |
+              awk '/^%FILENAME%$/{getline; print}'
+          }
+
+          db_files="$(db_filenames | sort -u)"
+          for pkgname in $PKG_NAMES; do
+            mapfile -t versions < <(
+              cd "$CHANNEL" &&
+              for f in $(ls -1 | grep -E "^${pkgname}-.*\.r[0-9]+\.[0-9a-f]+-[0-9]+-[a-z0-9_]+\.pkg\.tar\.zst$" || true); do
+                r="$(sed -n 's/^.*\.r\([0-9][0-9]*\)\..*/\1/p' <<<"$f")"
+                printf '%s %s\n' "${r:-0}" "$f"
+              done | sort -k1,1nr -k2,2r
+            )
+            total=${#versions[@]}
+            kept=0
+            to_delete=()
+            for line in "${versions[@]}"; do
+              kept=$(( kept + 1 ))
+              if (( kept > KEEP_N )); then
+                to_delete+=( "${line#* }" )
+              fi
+            done
+            if (( ${#to_delete[@]} == 0 )); then
+              echo "$pkgname: $total paquetes, dentro de la ventana de $KEEP_N; nada que podar"
+              continue
+            fi
+            newest="${versions[0]#* }"
+            danger="$(comm -12 <(printf '%s\n' "${to_delete[@]}" | sort -u) <(printf '%s\n' "$db_files"))"
+            if [[ -n "$danger" ]]; then
+              echo "la poda tocaría archivos que el db todavía sirve:" >&2
+              printf '%s\n' "$danger" >&2
+              # Mecanismo del db (bin/unpublish-packages): retira las entradas
+              # del pkgbase (split y -debug incluidos) y bin/publish-artifact
+              # re-agrega la más nueva, así el db sirve exactamente lo que
+              # queda en el árbol.
+              bash omarchy-pkgs/bin/unpublish-packages --remote "$REPO_DIR" --mirror stable --arch x86_64 $PKG_BASES
+              bash omarchy-pkgs/bin/publish-artifact --remote "$REPO_DIR" --mirror stable --arch x86_64 "$CHANNEL/$newest"
+              db_files="$(db_filenames | sort -u)"
+            fi
+            for f in "${to_delete[@]}"; do
+              if grep -qxF "$f" <<<"$db_files"; then
+                echo "salto $f: el db todavía lo sirve" >&2
+                continue
+              fi
+              rm -f "$CHANNEL/$f" "$CHANNEL/$f.sig"
+              echo "podado: $f"
+            done
+          done
+          echo "poda lista: últimos $KEEP_N paquetes por pkgname en stable/x86_64"
+
+      - name: Sign the databases and push gh-pages
+        if: github.event_name == 'repository_dispatch'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          PKG_NAME: ${{ steps.publish.outputs.pkgname }}
+          PKG_VER: ${{ steps.version.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+
+          cd repo
+          # GitHub Pages no sirve symlinks: el db y los files van como copias.
+          for f in stable/x86_64/omarchy.db stable/x86_64/omarchy.files; do
+            if [[ -L "$f" ]]; then
+              rl="$(readlink "$f")"
+              rm -f "$f"
+              cp -L "$(dirname "$f")/$rl" "$f"
+            fi
+          done
+          export GNUPGHOME="$(mktemp -d)"
+          gpg --batch --quiet --import <<<"$GPG_PRIVATE_KEY"
+          gpg --batch --yes --detach-sign --armor --output stable/x86_64/omarchy.db.sig stable/x86_64/omarchy.db
+          gpg --batch --yes --detach-sign --armor --output stable/x86_64/omarchy.files.sig stable/x86_64/omarchy.files
+          # El pacman.conf del fork usa la sección [omarchy-personal]: el db
+          # se publica también con ese nombre para que el repo sombreado
+          # resuelva.
+          cp stable/x86_64/omarchy.db stable/x86_64/omarchy-personal.db
+          cp stable/x86_64/omarchy.files stable/x86_64/omarchy-personal.files
+          gpg --batch --yes --detach-sign --armor --output stable/x86_64/omarchy-personal.db.sig stable/x86_64/omarchy-personal.db
+          gpg --batch --yes --detach-sign --armor --output stable/x86_64/omarchy-personal.files.sig stable/x86_64/omarchy-personal.files
+          rm -rf "$GNUPGHOME"
+          git config user.name "Roberto Flores"
+          git config user.email "25asab015@ujmd.edu.sv"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "sin cambios en gh-pages: el canal ya sirve esta versión"
+          else
+            git commit -m "publish: ${PKG_NAME} ${PKG_VER}"
+            git push origin gh-pages
+          fi
+
+      # Fallo de build, prueba o publicación → issue automático en este repo
+      # con label ready-for-agent y el log del run como artifact (patrón del
+      # template). Dedupe por título: un mismo sha re-corrido no abre dos.
+      - name: Collect the failure log
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh run view "$GITHUB_RUN_ID" --log-failed > failed-package.log 2>&1 || true
+
+      - name: Upload the failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-failure-${{ github.run_id }}
+          path: failed-package.log
+          if-no-files-found: ignore
+
+      - name: Open the failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKG_VER: ${{ steps.version.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+
+          failed_jobs="$(gh run view "$GITHUB_RUN_ID" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name + ": " + ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))] | join(" | ")')"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          title="[Pipeline] fallo de package.yml (${GITHUB_SHA::7})"
+          body="Fallo de build, prueba o publicación en el pipeline del paquete.
+
+          - Run: $run_url
+          - Trabajo y pasos fallidos: $failed_jobs
+          - Log adjunto: artifact package-failure-$GITHUB_RUN_ID del run.
+          - Versión empaquetada: ${PKG_VER:-desconocida}"
+
+          if gh issue list -R "$GITHUB_REPOSITORY" --state open --json title --jq '.[].title' | grep -qxF "$title"; then
+            echo "ya existe un issue abierto para este fallo: $title"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body" --label ready-for-agent
+          fi
