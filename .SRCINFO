@@ -1,7 +1,7 @@
 pkgbase = git-setup
 	pkgdesc = Configure Git, GitHub, SSH and GPG interactively
 	pkgver = 0.2.0
-	pkgrel = 2
+	pkgrel = 3
 	url = https://github.com/robert-flo/pj-domina-rf-git-setup
 	arch = any
 	license = MIT
