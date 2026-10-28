@@ -11,9 +11,9 @@ pkgbase = git-setup
 	depends = openssh
 	depends = git-delta
 	options = !debug
-	source = git-setup-0.2.0.tar.gz::https://github.com/robert-flo/pj-domina-rf-git-setup/archive/refs/tags/v0.2.0.tar.gz
+	source = git-setup-0.2.0.tar.gz
 	source = git-setup
-	sha256sums = 9552fdd1e48922ee74c70b66bc0924234aa087562f1bdc9c51baace11eda8619
+	sha256sums = SKIP
 	sha256sums = e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150
 
 pkgname = git-setup
