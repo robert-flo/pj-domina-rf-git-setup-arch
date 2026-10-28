@@ -365,7 +365,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh run view "$GITHUB_RUN_ID" --log-failed > failed-package.log 2>&1 || true
+          gh run view -R "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" --log-failed > failed-package.log 2>&1 || true
 
       - name: Upload the failure log
         if: failure()
@@ -383,7 +383,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          failed_jobs="$(gh run view "$GITHUB_RUN_ID" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name + ": " + ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))] | join(" | ")')"
+          failed_jobs="$(gh run view -R "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name + ": " + ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))] | join(" | ")')"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           title="[Pipeline] fallo de package.yml (${GITHUB_SHA::7})"
           body="Fallo de build, prueba o publicación en el pipeline del paquete.
