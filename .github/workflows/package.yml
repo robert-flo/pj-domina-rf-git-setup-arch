@@ -15,7 +15,7 @@ on:
       repo:
         description: Source repository (owner/name)
         required: false
-        default: ${{ github.repository }}
+        default: robert-flo/pj-domina-rf-git-setup-arch
       sha:
         description: Source commit sha (empty = default branch HEAD)
         required: false
