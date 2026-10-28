@@ -64,7 +64,7 @@ have '/opt/git-setup/runtime/commands.tsv'
 have 'runtime/completion'
 have '/usr/bin/git-setup help'
 have '/opt/git-setup/git-setup help'
-have 'default: ${{ github.repository }}'
+have 'default: robert-flo/pj-domina-rf-git-setup-arch'
 have '${GITHUB_REPOSITORY%-arch}'
 have 'actions/upload-artifact@v4'
 have 'path: build/*.pkg.tar.zst'
@@ -223,6 +223,32 @@ OLD_RESOLVE
 resolved="$(run_resolve "$old_resolve")"
 [[ $resolved == 'pj-domina-rf-git-setup' ]] || die "el fixture de la mutación no reproduce el bug: $resolved"
 expect_fail 'default sin owner' check_ownerful "$TEST_ROOT/resolve-output" 'default viejo hardcodeado'
+
+check_dispatch_inputs_literal() { # check_dispatch_inputs_literal <workflow_file>
+  local workflow="${1:-$WORKFLOW}" inputs
+  inputs="$(awk '
+    /^  workflow_dispatch:/ { in_wd = 1; next }
+    in_wd && /^    inputs:/ { in_inputs = 1; next }
+    in_inputs {
+      if (/^ {6}/) { print; next }
+      if (/^[[:space:]]*$/) { next }
+      exit
+    }
+  ' "$workflow")"
+  [[ -n "$inputs" ]] || die "no se pudo extraer on.workflow_dispatch.inputs de $workflow"
+  if grep -qF '${{' <<<"$inputs"; then
+    die "on.workflow_dispatch.inputs contiene una expresión \${{ }}: GitHub Actions no admite expresiones en defaults de inputs"
+  fi
+}
+
+# Aserción estática: los defaults de workflow_dispatch.inputs no admiten expresiones ${{ }}.
+check_dispatch_inputs_literal "$WORKFLOW"
+
+# Mutación: un default con expresión en workflow_dispatch.inputs debe morir en la aserción.
+mutated_workflow="$TEST_ROOT/package-with-expression-default.yml"
+sed 's|default: robert-flo/pj-domina-rf-git-setup-arch|default: ${{ github.repository }}|' "$WORKFLOW" \
+  > "$mutated_workflow"
+expect_fail 'default con expresión ${{ }}' check_dispatch_inputs_literal "$mutated_workflow"
 
 # ---------------------------------------------------------------------- #
 # package() funciona: contra un fixture del árbol fuente se ejecuta el    #
