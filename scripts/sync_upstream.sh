@@ -52,7 +52,7 @@ main() {
   makepkg --printsrcinfo > .SRCINFO
 
   printf '\nUpdated package metadata. Review with: git diff -- PKGBUILD .SRCINFO\n'
-  printf 'Then validate with: make build && make test-release\n'
+  printf 'Then validate with: make build\n'
 }
 
 main "$@"

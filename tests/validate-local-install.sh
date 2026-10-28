@@ -81,7 +81,6 @@ Host impact:
 Checksum behavior:
   The generated local archive is not byte-identical to GitHub's release archive,
   so this test redirects PKGBUILD to the local file and uses --skipchecksums.
-  validate-release-archive.sh independently verifies the published checksums.
 
 Exit status:
   0  Package installation and all public-command checks passed.

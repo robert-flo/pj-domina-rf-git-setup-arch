@@ -22,6 +22,18 @@ assert_file_line() {
   grep -Fxq "$expected" "$path" || die "missing '$expected' in $path"
 }
 
+expect_fail() {
+  local why="$1"; shift
+  if ( "$@" ) > /dev/null 2>&1; then
+    die "la mutación no fue detectada: $why"
+  fi
+}
+
+check_pkgbuild_preserves_skip() {
+  local path="$1"
+  grep -Fxq "  'SKIP'" "$path" || die "missing '  'SKIP'' in $path"
+}
+
 setup() {
   test_dir="$(mktemp -d "${TMPDIR:-/tmp}/git-setup-automation-test.XXXXXX")"
   trap 'rm -rf "$test_dir"' EXIT
@@ -52,7 +64,7 @@ MOCK_CURL
   chmod +x "$test_dir/bin/gh" "$test_dir/bin/curl"
 }
 
-test_check_detects_release() {
+test_check_reports_unchanged_when_pkgbuild_uses_skip() {
   local output_file="$test_dir/check-output"
   local expected_checksum
 
@@ -62,57 +74,45 @@ test_check_detects_release() {
     GITHUB_OUTPUT="$output_file" \
     "$PACKAGE_DIR/scripts/check_upstream.sh" > /dev/null
 
-  assert_file_line 'changed=true' "$output_file"
+  assert_file_line 'changed=false' "$output_file"
   assert_file_line 'upstream_tag=v9.8.7' "$output_file"
   assert_file_line 'upstream_version=9.8.7' "$output_file"
   assert_file_line "archive_sha256=$expected_checksum" "$output_file"
+  assert_file_line 'current_archive_sha256=SKIP' "$output_file"
 }
 
-test_update_changes_version_and_resets_release() {
+test_update_preserves_skip_contract() {
   local checksum
   checksum="$(printf '%s\n' 'deterministic upstream archive fixture' | sha256sum | awk '{print $1}')"
 
+  cp "$test_dir/PKGBUILD" "$test_dir/PKGBUILD.before"
+
   PKGBUILD_PATH="$test_dir/PKGBUILD" \
     UPSTREAM_VERSION=9.8.7 \
     ARCHIVE_SHA256="$checksum" \
     "$PACKAGE_DIR/scripts/update_package.sh" > /dev/null
 
-  assert_file_line 'pkgver=9.8.7' "$test_dir/PKGBUILD"
-  assert_file_line 'pkgrel=1' "$test_dir/PKGBUILD"
-  assert_file_line "  '$checksum'" "$test_dir/PKGBUILD"
+  check_pkgbuild_preserves_skip "$test_dir/PKGBUILD"
+  cmp -s "$test_dir/PKGBUILD" "$test_dir/PKGBUILD.before" \
+    || die 'update_package.sh modificó PKGBUILD a pesar del contrato SKIP'
 }
 
-test_check_sees_matching_package() {
-  local output_file="$test_dir/matching-output"
-
-  PATH="$test_dir/bin:$PATH" \
-    PKGBUILD_PATH="$test_dir/PKGBUILD" \
-    GITHUB_OUTPUT="$output_file" \
-    "$PACKAGE_DIR/scripts/check_upstream.sh" > /dev/null
-
-  assert_file_line 'changed=false' "$output_file"
-}
-
-test_same_version_checksum_change_increments_release() {
+test_revived_flow_overwriting_skip_fails() {
   local checksum
-  checksum="$(printf 'b%.0s' {1..64})"
+  checksum="$(printf '%s\n' 'deterministic upstream archive fixture' | sha256sum | awk '{print $1}')"
+  local mutated="$test_dir/PKGBUILD.revived"
 
-  PKGBUILD_PATH="$test_dir/PKGBUILD" \
-    UPSTREAM_VERSION=9.8.7 \
-    ARCHIVE_SHA256="$checksum" \
-    "$PACKAGE_DIR/scripts/update_package.sh" > /dev/null
+  # Simula el flujo viejo revivido pisando SKIP con el checksum fijo del release
+  sed "s/'SKIP'/'${checksum}'/" "$test_dir/PKGBUILD" > "$mutated"
 
-  assert_file_line 'pkgver=9.8.7' "$test_dir/PKGBUILD"
-  assert_file_line 'pkgrel=2' "$test_dir/PKGBUILD"
-  assert_file_line "  '$checksum'" "$test_dir/PKGBUILD"
+  expect_fail 'flujo revivido pisa SKIP con checksum fijo' check_pkgbuild_preserves_skip "$mutated"
 }
 
 main() {
   setup
-  test_check_detects_release
-  test_update_changes_version_and_resets_release
-  test_check_sees_matching_package
-  test_same_version_checksum_change_increments_release
+  test_check_reports_unchanged_when_pkgbuild_uses_skip
+  test_update_preserves_skip_contract
+  test_revived_flow_overwriting_skip_fails
   printf 'PASS: upstream automation contracts\n'
 }
 
