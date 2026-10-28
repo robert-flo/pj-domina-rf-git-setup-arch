@@ -30,6 +30,14 @@ miss() {
   ! grep -qF -- "$1" "$2" || die "$3"
 }
 
+expect_fail() { # expect_fail <por que debe fallar> <cmd...>
+  local why="$1"; shift
+  # En subshell: die del check hace exit y no debe matar el test entero.
+  if ( "$@" ) > /dev/null 2>&1; then
+    die "la mutación no fue detectada: $why"
+  fi
+}
+
 # The run body of a named step, extracted from the YAML and dedented: this
 # is the logic the workflow will execute, tested directly instead of trusted.
 extract_run() {
@@ -119,6 +127,11 @@ make_fixture() { # make_fixture <name> <commits> <tag?>
   git -C "$repo" init -q
   git -C "$repo" config user.name 'Fixture'
   git -C "$repo" config user.email fixture@example.test
+  # El fixture no hereda la config global de git: con tag.gpgsign y
+  # commit.gpgsign activos globalmente el tag del fixture muere y la
+  # versión cae al total de commits (issue #16, hallazgo del PR #15).
+  git -C "$repo" config tag.gpgsign false
+  git -C "$repo" config commit.gpgsign false
   for _ in $(seq 1 "$2"); do
     printf '%s\n' "$RANDOM" > "$repo/file"
     git -C "$repo" add file
@@ -158,6 +171,50 @@ read -r pkgver sha <<<"$(run_version "$untagged")"
 expected="0.2.0.r2.$(git -C "$untagged" rev-parse --short=7 HEAD)"
 [[ $pkgver == "$expected" ]] || die "untagged fixture: expected $expected, got $pkgver"
 
+# ---------------------------------------------------------------------- #
+# El fixture no hereda la config global de git (issue #16, hallazgo del  #
+# PR #15): con tag.gpgsign y commit.gpgsign activos en la config global  #
+# y GIT_EDITOR=false, el tag del fixture debe crearse igual (sin firmar) #
+# y la versión seguir siendo 0.2.0.r3. Sin este aislamiento la suite     #
+# solo pasaba con GIT_CONFIG_GLOBAL=/dev/null.                           #
+# ---------------------------------------------------------------------- #
+signed_config="$TEST_ROOT/gitconfig-signed"
+cat > "$signed_config" <<'EOF'
+[user]
+	 signingkey = 0000000000000000000000000000000000000000
+[commit]
+	 gpgsign = true
+[tag]
+	 gpgsign = true
+EOF
+signed_repo="$(GIT_CONFIG_GLOBAL="$signed_config" GIT_EDITOR=false make_fixture signed 5 'v0.2.0')"
+if ! git -C "$signed_repo" rev-parse HEAD >/dev/null 2>&1; then
+  die 'el fixture con firmas activas quedó sin commits: make_fixture hereda la config global de git (issue #16)'
+fi
+git -C "$signed_repo" rev-parse -q --verify 'v0.2.0' >/dev/null 2>&1 \
+  || die 'el fixture con firmas activas perdió el tag v0.2.0: make_fixture hereda la config global de git (issue #16)'
+read -r signed_pkgver _ <<<"$(GIT_CONFIG_GLOBAL="$signed_config" GIT_EDITOR=false run_version "$signed_repo")"
+signed_expected="0.2.0.r3.$(git -C "$signed_repo" rev-parse --short=7 HEAD)"
+[[ $signed_pkgver == "$signed_expected" ]] || die "signed fixture: expected $signed_expected, got $signed_pkgver"
+
+# Mutación: el mismo make_fixture sin el desactivado de firmas muere con
+# ese entorno, o sea que el aislamiento es lo que salva al fixture.
+test_file="$SCRIPT_DIR/test-package-workflow.sh"
+stripped_fixture="$TEST_ROOT/make_fixture.sin-firmas.sh"
+awk '/^make_fixture\(\)/{p=1} p{print} p&&/^}/{exit}' "$test_file" \
+  | sed -e '/git -C "$repo" config tag.gpgsign false/d' \
+        -e '/git -C "$repo" config commit.gpgsign false/d' > "$stripped_fixture"
+grep -q 'config tag.gpgsign false' "$stripped_fixture" && die 'la mutación no quitó el desactivado de tag.gpgsign'
+grep -q 'config commit.gpgsign false' "$stripped_fixture" && die 'la mutación no quitó el desactivado de commit.gpgsign'
+expect_fail 'make_fixture sin el desactivado de firmas muere con firmas activas' \
+  env GIT_CONFIG_GLOBAL="$signed_config" GIT_EDITOR=false bash -c '
+    set -Eeuo pipefail
+    die() { printf "FAIL: %s\n" "$1" >&2; exit 1; }
+    source "$1"
+    repo="$(make_fixture mutado 1)"
+    test -d "$repo"
+  ' _ "$stripped_fixture"
+
 # The build and install step is syntactically valid.
 build_script="$TEST_ROOT/build.sh"
 extract_run 'Build the package and install-test it' > "$build_script"
@@ -171,14 +228,6 @@ resolve_script="$TEST_ROOT/resolve.sh"
 extract_run 'Resolve the dispatched source' > "$resolve_script"
 [[ -s "$resolve_script" ]] || die 'could not extract the resolve step from package.yml'
 bash -n "$resolve_script" || die 'the extracted resolve step is not valid bash'
-
-expect_fail() { # expect_fail <por que debe fallar> <cmd...>
-  local why="$1"; shift
-  # En subshell: die del check hace exit y no debe matar el test entero.
-  if ( "$@" ) > /dev/null 2>&1; then
-    die "la mutación no fue detectada: $why"
-  fi
-}
 
 check_ownerful() { # check_ownerful <github_output_file> <why>
   local repo
