@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# Fast, network-free contract tests for the upstream package automation.
+# Fast, network-free contract tests for the upstream package automation
+# and for the AGENTS.md capability contract.
 
 set -Eeuo pipefail
 
@@ -97,6 +98,38 @@ test_update_preserves_skip_contract() {
     || die 'update_package.sh modificó PKGBUILD a pesar del contrato SKIP'
 }
 
+# ---------------------------------------------------------------------- #
+# AGENTS.md: contrato de pruebas por capacidad. Las dos reglas duras      #
+# (el WK nunca instala; el CI del -arch verifica la instalación en        #
+# contenedor Arch) viven en AGENTS.md y este test las vigila: si alguien  #
+# borra cualquiera de las dos, la aserción muere.                         #
+# ---------------------------------------------------------------------- #
+AGENTS_FILE="$PACKAGE_DIR/AGENTS.md"
+
+check_agents_capability_contract() { # check_agents_capability_contract <agents_md>
+  local path="$1"
+  grep -qF 'El WK NUNCA instala' "$path" || \
+    die "AGENTS.md no declara la regla dura 'El WK NUNCA instala' (pacman -U prohibido en la PC de Roberto)"
+  grep -qF 'el CI del -arch verifica la instalación en contenedor Arch' "$path" || \
+    die "AGENTS.md no declara el piso 'el CI del -arch verifica la instalación en contenedor Arch'"
+}
+
+test_agents_declares_capability_contract() {
+  [[ -f "$AGENTS_FILE" ]] || die 'AGENTS.md no existe en la raíz del repo'
+  check_agents_capability_contract "$AGENTS_FILE"
+}
+
+test_contract_survives_deletion_of_each_rule() {
+  local no_install="$test_dir/AGENTS.sin-wk.md"
+  local no_ci="$test_dir/AGENTS.sin-ci.md"
+  grep -v 'El WK NUNCA instala' "$AGENTS_FILE" > "$no_install"
+  cmp -s "$AGENTS_FILE" "$no_install" && die 'el fixture de mutación no borró la regla del WK'
+  expect_fail 'AGENTS.md sin la regla del WK' check_agents_capability_contract "$no_install"
+  grep -v 'el CI del -arch verifica la instalación en contenedor Arch' "$AGENTS_FILE" > "$no_ci"
+  cmp -s "$AGENTS_FILE" "$no_ci" && die 'el fixture de mutación no borró el piso del CI'
+  expect_fail 'AGENTS.md sin el piso del CI' check_agents_capability_contract "$no_ci"
+}
+
 test_revived_flow_overwriting_skip_fails() {
   local checksum
   checksum="$(printf '%s\n' 'deterministic upstream archive fixture' | sha256sum | awk '{print $1}')"
@@ -113,6 +146,8 @@ main() {
   test_check_reports_unchanged_when_pkgbuild_uses_skip
   test_update_preserves_skip_contract
   test_revived_flow_overwriting_skip_fails
+  test_agents_declares_capability_contract
+  test_contract_survives_deletion_of_each_rule
   printf 'PASS: upstream automation contracts\n'
 }
 

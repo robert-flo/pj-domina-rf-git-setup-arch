@@ -108,6 +108,12 @@ make test SOURCE_DIR=/path/to/git-setup
 SOURCE_DIR is equivalent to GIT_SETUP_SOURCE_DIR. It must identify a Git
 worktree containing the source repository's root git-setup dispatcher.
 
+An agent working in this repository follows the testing rules in
+[AGENTS.md](AGENTS.md): tests by capability, and it never installs
+(pacman stays clean for the final pacman -Syu against the published
+package); the floor is the CI of this repo, which verifies installation
+in an Arch container.
+
 ### Local Package Installation
 
 make test-local SOURCE_DIR=... validates an actual committed source revision.
