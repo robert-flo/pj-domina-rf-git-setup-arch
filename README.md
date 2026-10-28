@@ -96,31 +96,17 @@ its work, reports success, and suggests the relevant next actions.
 <a id="validation"></a>
 <img src="https://readme-typing-svg.herokuapp.com?font=Lexend+Giga&size=25&pause=1000&color=CCA9DD&vCenter=true&width=435&height=25&lines=VALIDATION" width="450"/>
 
-The package has two deliberately separate Docker validations. Both use
-docker run --rm; neither installs or upgrades host packages, mounts the host
-home directory, Git configuration, SSH keys, GPG keys, or package cache.
+The package provides Docker validation that uses docker run --rm; it neither
+installs or upgrades host packages, nor mounts the host home directory, Git
+configuration, SSH keys, GPG keys, or package cache.
 
 ```shell
-make test-release
 make test-local SOURCE_DIR=/path/to/git-setup
 make test SOURCE_DIR=/path/to/git-setup
 ```
 
 SOURCE_DIR is equivalent to GIT_SETUP_SOURCE_DIR. It must identify a Git
 worktree containing the source repository's root git-setup dispatcher.
-
-### Published Release Archive
-
-make test-release checks release integrity only. Inside a disposable
-archlinux:latest container it rejects SKIP or malformed archive checksums,
-downloads every PKGBUILD source entry, and runs makepkg --verifysource.
-
-It does not build, install, or execute git-setup. The stock Arch image already
-provides makepkg, curl, and SHA-256 tooling, so this validation installs no
-container packages and does not need base-devel.
-
-Run it after publishing a tag or changing release metadata. It fails when
-GitHub is unavailable, a source is missing, or a checksum differs.
 
 ### Local Package Installation
 
@@ -157,10 +143,9 @@ therefore unnecessary for the current validator. If native compilation is
 introduced later, restore a full base-devel environment and update this
 documentation.
 
-Each validator also has direct terminal help:
+The validator also has direct terminal help:
 
 ```shell
-tests/validate-release-archive.sh --help
 tests/validate-local-install.sh --help
 ```
 
@@ -203,7 +188,6 @@ then review the result before committing it:
 make update-upstream
 git diff -- PKGBUILD .SRCINFO
 make build
-make test-release
 ```
 
 `make update-upstream` requires an authenticated GitHub CLI session (`gh auth

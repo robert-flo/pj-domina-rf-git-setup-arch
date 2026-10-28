@@ -40,8 +40,7 @@ phase_prepare_workspace() {
   find /work/package -maxdepth 1 -type f -name '*.pkg.tar.*' -delete
 
   # A local git archive has different bytes from the published GitHub archive.
-  # Redirect PKGBUILD to it here; validate-release-archive.sh independently
-  # checks the published checksums.
+  # Redirect PKGBUILD to it here.
   sed -i \
     "s|\${url}/archive/refs/tags/v\${pkgver}.tar.gz|file:///archive/git-setup-${PKG_VERSION}.tar.gz|" \
     /work/package/PKGBUILD

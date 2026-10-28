@@ -6,7 +6,7 @@
 
 SOURCE_DIR ?= $(GIT_SETUP_SOURCE_DIR)
 
-.PHONY: help-package build install reinstall clean test test-release test-local test-automation update-upstream lint srcinfo-check
+.PHONY: help-package build install reinstall clean test test-local test-automation update-upstream lint srcinfo-check
 
 # ═══════════════════════════════════════════════════════════════
 # 📚 HELP-PACKAGE - Show package workflow targets
@@ -21,11 +21,10 @@ help-package: ## Show package maintenance targets
 	@printf "  make lint              Check Bash, ShellCheck, .SRCINFO, and whitespace\n"
 	@printf "  make test-automation   Test upstream detection and metadata updates offline\n"
 	@printf "  make update-upstream   Check upstream and update PKGBUILD/.SRCINFO locally\n"
-	@printf "  make test-release      Verify the published release archive in Docker\n"
 	@printf "  make test-local SOURCE_DIR=/path/to/source\n"
 	@printf "                         Build, install, and exercise committed local source\n"
 	@printf "  make test SOURCE_DIR=/path/to/source\n"
-	@printf "                         Run lint and both container validations\n"
+	@printf "                         Run lint and package validations\n"
 	@printf "  make srcinfo-check     Verify .SRCINFO matches PKGBUILD\n\n"
 
 # ═══════════════════════════════════════════════════════════════
@@ -68,7 +67,6 @@ ifndef EMBEDDED
 	@printf "\n$(YELLOW)📋 Quick Actions:$(NC)\n"
 	@printf "$(DIM)────────────────────────────────────────────────────────────────────────────────$(NC)\n"
 	@printf "  • start the interactive menu:  $(BLUE)git-setup$(NC)\n"
-	@printf "  • validate the release:        $(BLUE)make test-release$(NC)\n"
 	@printf "  • remove generated artifacts:  $(BLUE)make clean$(NC)\n\n"
 endif
 
@@ -138,7 +136,7 @@ ifndef EMBEDDED
 	@printf "\n$(GREEN)  ✓ done$(NC)\n"
 	@printf "\n$(YELLOW)📋 Quick Actions:$(NC)\n"
 	@printf "$(DIM)────────────────────────────────────────────────────────────────────────────────$(NC)\n"
-	@printf "  • verify the release archive:  $(BLUE)make test-release$(NC)\n"
+	@printf "  • test package automation:    $(BLUE)make test-automation$(NC)\n"
 	@printf "  • run every validation:        $(BLUE)make test SOURCE_DIR=/path/to/source$(NC)\n\n"
 endif
 
@@ -171,26 +169,6 @@ ifndef EMBEDDED
 endif
 
 # ═══════════════════════════════════════════════════════════════
-# 🌐 TEST-RELEASE - Verify the published release archive
-# ═══════════════════════════════════════════════════════════════
-# ──── Release: Downloads the published tag in Docker and verifies checksums ────
-test-release: ## Verify the published release archive in Docker
-ifndef EMBEDDED
-	@printf "\n"
-	@printf "$(CYAN)🌐 test-release · verifying the published release archive$(NC)\n"
-	@printf "$(CYAN)────────────────────────────────────────────────────────────────────────────────$(NC)\n"
-endif
-	@tests/validate-release-archive.sh
-	@printf "$(GREEN)  ✓ published release archive validation passed$(NC)\n"
-ifndef EMBEDDED
-	@printf "\n$(GREEN)  ✓ done$(NC)\n"
-	@printf "\n$(YELLOW)📋 Quick Actions:$(NC)\n"
-	@printf "$(DIM)────────────────────────────────────────────────────────────────────────────────$(NC)\n"
-	@printf "  • validate local source:       $(BLUE)make test-local SOURCE_DIR=/path/to/source$(NC)\n"
-	@printf "  • run every validation:        $(BLUE)make test SOURCE_DIR=/path/to/source$(NC)\n\n"
-endif
-
-# ═══════════════════════════════════════════════════════════════
 # 🧪 TEST-LOCAL - Build and exercise a local source revision
 # ═══════════════════════════════════════════════════════════════
 # ──── Local: Packages committed source HEAD and exercises the installed command ────
@@ -217,7 +195,7 @@ endif
 # ═══════════════════════════════════════════════════════════════
 # ✅ TEST - Run every package validation
 # ═══════════════════════════════════════════════════════════════
-# ──── Test: Runs lint, automation, release, and local-install validations ────
+# ──── Test: Runs lint, automation, and local-install validations ────
 test: ## Run every package validation
 ifndef EMBEDDED
 	@printf "\n"
@@ -226,7 +204,6 @@ ifndef EMBEDDED
 endif
 	@$(MAKE) --no-print-directory lint EMBEDDED=1
 	@$(MAKE) --no-print-directory test-automation EMBEDDED=1
-	@$(MAKE) --no-print-directory test-release EMBEDDED=1
 	@$(MAKE) --no-print-directory test-local EMBEDDED=1 SOURCE_DIR="$(SOURCE_DIR)"
 	@printf "$(GREEN)  ✓ all package validations passed$(NC)\n"
 ifndef EMBEDDED
