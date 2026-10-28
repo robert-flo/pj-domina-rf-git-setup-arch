@@ -57,7 +57,19 @@ main() {
   require_command sha256sum
   [[ -f "$PKGBUILD_PATH" ]] || die "missing PKGBUILD: $PKGBUILD_PATH"
 
-  release_json="$(gh api "repos/$UPSTREAM_REPO/releases/latest")"
+  current_pkgver="$(read_current_pkgver)"
+  current_checksum="$(read_current_archive_checksum)"
+  [[ -n $current_pkgver ]] || die "PKGBUILD does not define pkgver: $PKGBUILD_PATH"
+
+  if ! release_json="$(gh api "repos/$UPSTREAM_REPO/releases/latest" 2>/dev/null)"; then
+    write_output changed "false"
+    write_output upstream_tag "none"
+    write_output upstream_version "none"
+    write_output current_pkgver "$current_pkgver"
+    write_output current_archive_sha256 "$current_checksum"
+    return 0
+  fi
+
   upstream_tag="$(jq -r '.tag_name // empty' <<< "$release_json")"
   [[ $upstream_tag =~ ^v([0-9]+([.][0-9]+)*)$ ]] \
     || die "latest upstream release tag is not a stable vN.N version: ${upstream_tag:-<empty>}"
@@ -75,13 +87,13 @@ main() {
   [[ $archive_checksum =~ ^[[:xdigit:]]{64}$ ]] \
     || die 'failed to calculate a valid SHA-256 checksum for the upstream archive.'
 
-  current_pkgver="$(read_current_pkgver)"
-  current_checksum="$(read_current_archive_checksum)"
-  [[ -n $current_pkgver ]] || die "PKGBUILD does not define pkgver: $PKGBUILD_PATH"
-
   changed=false
-  if [[ $upstream_version != "$current_pkgver" || $archive_checksum != "$current_checksum" ]]; then
-    changed=true
+  # Con el contrato nuevo de pipeline (tarball al vuelo desde dispatch),
+  # PKGBUILD fija 'SKIP' en sha256sums; no se debe registrar cambio que pise SKIP.
+  if [[ $current_checksum != "SKIP" ]]; then
+    if [[ $upstream_version != "$current_pkgver" || $archive_checksum != "$current_checksum" ]]; then
+      changed=true
+    fi
   fi
 
   write_output changed "$changed"

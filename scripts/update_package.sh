@@ -44,6 +44,7 @@ write_output() {
 
 main() {
   local current_pkgver current_pkgrel new_pkgrel updated_checksum
+  local current_checksum
 
   [[ -f "$PKGBUILD_PATH" ]] || die "missing PKGBUILD: $PKGBUILD_PATH"
   [[ $UPSTREAM_VERSION =~ ^[0-9]+([.][0-9]+)*$ ]] \
@@ -53,9 +54,19 @@ main() {
 
   current_pkgver="$(read_pkgbuild_value pkgver)"
   current_pkgrel="$(read_pkgbuild_value pkgrel)"
+  current_checksum="$(read_archive_checksum)"
   [[ -n $current_pkgver ]] || die 'PKGBUILD does not define pkgver.'
   [[ $current_pkgrel =~ ^[0-9]+$ && $current_pkgrel -ge 1 ]] \
     || die 'PKGBUILD pkgrel must be a positive integer.'
+
+  # Con el contrato nuevo de pipeline (tarball al vuelo desde dispatch con SKIP),
+  # no se debe mutar el PKGBUILD ni pisar el SKIP bajo ninguna circunstancia.
+  if [[ $current_checksum == "SKIP" ]]; then
+    printf 'PKGBUILD uses dynamic pipeline archive (SKIP); preserving contract without modification.\n'
+    write_output pkgver "$current_pkgver"
+    write_output pkgrel "$current_pkgrel"
+    return 0
+  fi
 
   if [[ $UPSTREAM_VERSION == "$current_pkgver" ]]; then
     new_pkgrel=$((current_pkgrel + 1))
