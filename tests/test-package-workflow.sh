@@ -87,6 +87,21 @@ grep -qF 'e1940018f1f1f042fdb697fdfcf022076cfcd2821c3689aaa3fd5c6d3583f150' "$PA
   die 'PKGBUILD lost the launcher checksum'
 grep -qF 'source_dir="${srcdir}/pj-domina-rf-git-setup-${pkgver}"' "$PACKAGE_DIR/PKGBUILD" || \
   die 'package() no longer matches the tarball layout'
+# El package() consume el arbol del repo fuente: cada ruta que referencia
+# debe existir alla. El layout real de la fuente (launcher en el raiz, todo
+# el runtime bajo runtime/; verificado en 2787e40d) se replica en un fixture
+# y cada referencia se valida contra el. Si la fuente mueve el runtime, la
+# asercion avisa antes del run real.
+source_fixture="$TEST_ROOT/source-tree"
+mkdir -p "$source_fixture/runtime/helper" "$source_fixture/runtime/lib" \
+  "$source_fixture/runtime/scripts" "$source_fixture/runtime/templates/git"
+printf '#!/usr/bin/env bash\n' > "$source_fixture/git-setup"
+while IFS= read -r ref; do
+  rel="${ref#\$\{source_dir\}/}"
+  rel="${rel%/}"
+  [[ -n "$rel" && -e "$source_fixture/$rel" ]] || \
+    die "package() references a source path missing from the source tree: $ref"
+done < <(grep -oE '"\$\{source_dir\}/[^"]+"' "$PACKAGE_DIR/PKGBUILD" | tr -d '"')
 
 # .SRCINFO is regenerated to the same contract.
 miss 'archive/refs/tags' "$PACKAGE_DIR/.SRCINFO" '.SRCINFO still references the tag tarball'
