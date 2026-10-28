@@ -41,7 +41,7 @@ extract_run() {
       if ($0 ~ /^[[:space:]]*$/) { next }
       exit
     }
-  ' "$WORKFLOW"
+  ' "${2:-$WORKFLOW}"
 }
 
 # package.yml structure: dispatch trigger, Arch container, checkout at the
@@ -252,6 +252,30 @@ mutated_workflow="$TEST_ROOT/package-with-expression-default.yml"
 sed 's|default: robert-flo/pj-domina-rf-git-setup-arch|default: ${{ github.repository }}|' "$WORKFLOW" \
   > "$mutated_workflow"
 expect_fail 'default con expresión ${{ }}' check_dispatch_inputs_literal "$mutated_workflow"
+
+# ---------------------------------------------------------------------- #
+# Reporte de fallo: los gh run view de los pasos de reporte llevan        #
+# -R "$GITHUB_REPOSITORY". Sin -R gh intenta detectar el repo base con    #
+# git dentro del contenedor y muere por dubious ownership, así que un     #
+# fallo real del pipeline no deja issue con label (run real 40778999252). #
+# ---------------------------------------------------------------------- #
+check_failure_report_repo_flag() { # check_failure_report_repo_flag <workflow_file>
+  local workflow="$1" script step
+  for step in 'Collect the failure log' 'Open the failure issue'; do
+    script="$TEST_ROOT/failure-report.sh"
+    extract_run "$step" "$workflow" > "$script"
+    [[ -s "$script" ]] || die "no se pudo extraer el paso del workflow: $step"
+    grep -qF 'gh run view -R "$GITHUB_REPOSITORY"' "$script" || \
+      die "el paso '$step' corre gh run view sin -R \"\$GITHUB_REPOSITORY\": gh detecta el repo base con git y muere por dubious ownership en el contenedor (run 40778999252)"
+  done
+}
+check_failure_report_repo_flag "$WORKFLOW"
+
+# Mutación: si el paso pierde el -R, la aserción muere.
+mutated_workflow="$TEST_ROOT/package-without-r-flag.yml"
+sed 's|gh run view -R "$GITHUB_REPOSITORY"|gh run view|' "$WORKFLOW" \
+  > "$mutated_workflow"
+expect_fail 'gh run view sin -R' check_failure_report_repo_flag "$mutated_workflow"
 
 # ---------------------------------------------------------------------- #
 # package() funciona: contra un fixture del árbol fuente se ejecuta el    #
