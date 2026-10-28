@@ -15,7 +15,7 @@ on:
       repo:
         description: Source repository (owner/name)
         required: false
-        default: pj-domina-rf-git-setup
+        default: ${{ github.repository }}
       sha:
         description: Source commit sha (empty = default branch HEAD)
         required: false
@@ -55,7 +55,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          repo="${DISPATCH_REPO:-${INPUT_REPO:-pj-domina-rf-git-setup}}"
+          repo="${DISPATCH_REPO:-${INPUT_REPO:-$GITHUB_REPOSITORY}}"
+          # El default es este repo; la fuente es el mismo nombre sin el
+          # sufijo -arch, con owner incluido, así un dispatch a mano con
+          # defaults no falla en el checkout.
+          if [[ $repo == "$GITHUB_REPOSITORY" ]]; then
+            repo="${GITHUB_REPOSITORY%-arch}"
+          fi
           sha="${DISPATCH_SHA:-${INPUT_SHA:-}}"
           {
             printf 'repo=%s\n' "${repo}"
@@ -139,15 +145,22 @@ jobs:
 
           test -x /usr/bin/git-setup
           test -x /opt/git-setup/git-setup
-          for subdir in helper lib scripts templates/git; do
+          # El launcher resuelve $scrDir/runtime, así que el payload debe
+          # traer el runtime anidado, commands.tsv y completion incluidos.
+          for subdir in runtime/helper runtime/lib runtime/scripts runtime/templates/git runtime/completion; do
             test -d "/opt/git-setup/${subdir}"
             [[ -n "$(ls -A "/opt/git-setup/${subdir}")" ]] || {
               echo "/opt/git-setup/${subdir} quedó vacío" >&2
               exit 1
             }
           done
+          test -f /opt/git-setup/runtime/commands.tsv
           test -f /usr/share/applications/git-setup.desktop
-          echo "instalación verificada: /usr/bin/git-setup, /opt/git-setup y la desktop entry presentes"
+          # Smoke sin estado: el launcher instalado debe correr, no solo
+          # existir. Ambos entrypoints deben resolver su runtime.
+          TERM=dumb /usr/bin/git-setup help > /dev/null
+          TERM=dumb /opt/git-setup/git-setup help > /dev/null
+          echo "instalación verificada: /usr/bin/git-setup, /opt/git-setup y la desktop entry presentes; el launcher corre desde ambas rutas"
 
       - name: Upload the package artifact
         uses: actions/upload-artifact@v4
