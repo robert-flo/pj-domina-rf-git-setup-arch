@@ -19,6 +19,6 @@ jobs:
           set -Eeuo pipefail
           bash -n PKGBUILD scripts/*.sh tests/*.sh tests/lib/*.sh
           shellcheck scripts/*.sh tests/*.sh tests/lib/*.sh
-          tests/test-upstream-automation.sh
-          tests/test-vendored-contract.sh
-          tests/test-package-workflow.sh
+          bash tests/test-upstream-automation.sh
+          bash tests/test-vendored-contract.sh
+          bash tests/test-package-workflow.sh

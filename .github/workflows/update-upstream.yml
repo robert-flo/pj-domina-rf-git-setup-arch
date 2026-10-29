@@ -47,8 +47,8 @@ jobs:
           test -x tests/test-upstream-automation.sh
           bash -n scripts/*.sh tests/*.sh tests/lib/*.sh
           shellcheck scripts/*.sh tests/*.sh tests/lib/*.sh
-          tests/test-upstream-automation.sh
-          tests/test-vendored-contract.sh
+          bash tests/test-upstream-automation.sh
+          bash tests/test-vendored-contract.sh
 
       - name: Check latest stable upstream release
         id: check
