@@ -47,7 +47,8 @@ jobs:
           test -x tests/test-upstream-automation.sh
           bash -n scripts/*.sh tests/*.sh tests/lib/*.sh
           shellcheck scripts/*.sh tests/*.sh tests/lib/*.sh
-          tests/test-upstream-automation.sh
+          bash tests/test-upstream-automation.sh
+          bash tests/test-vendored-contract.sh
 
       - name: Check latest stable upstream release
         id: check
@@ -100,23 +101,26 @@ jobs:
           if-no-files-found: error
           path: "*.pkg.tar.zst"
 
-      - name: Commit package metadata
+      - name: Checkout the sync mechanism from upstream
+        if: steps.check.outputs.changed == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          path: source-sync
+          token: ${{ github.token }}
+
+      # El ship va por PR con automerge en CI verde (ticket #8): nunca push
+      # directo a la default. El mecanismo vive en la fuente y es el mismo
+      # que el workflow sync-arch.yml; no toca el wrapper vendido.
+      - name: Ship package metadata by PR
         if: steps.check.outputs.changed == 'true'
         env:
-          PKGVER: ${{ steps.update.outputs.pkgver }}
-          PKGREL: ${{ steps.update.outputs.pkgrel }}
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+          ARCH_DIR: ${{ github.workspace }}
         run: |
           set -Eeuo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git add PKGBUILD .SRCINFO
-
-          if git diff --cached --quiet; then
-            echo "No package metadata changed."
-            exit 0
-          fi
-
-          git -c user.name="github-actions[bot]" \
-              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore: update package to v${PKGVER}-${PKGREL}"
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push origin "HEAD:$GITHUB_REF_NAME"
+          git config user.name "Roberto Flores"
+          git config user.email "25asab015@ujmd.edu.sv"
+          bash "${{ github.workspace }}/source-sync/.github/scripts/sync-arch.sh" ship
