@@ -69,6 +69,14 @@ jobs:
           if [[ $repo == "$GITHUB_REPOSITORY" ]]; then
             repo="${GITHUB_REPOSITORY%-arch}"
           fi
+          # Guardia del repo fuente: este paquete solo empaqueta la
+          # fuente del dúo; un dispatch con otra fuente (a mano o con
+          # payload mal formado) muere aquí con mensaje claro, no al
+          # final en package().
+          if [[ $repo != "${GITHUB_REPOSITORY%-arch}" ]]; then
+            echo "repositorio fuente inesperado: '$repo'; este paquete solo empaqueta '${GITHUB_REPOSITORY%-arch}'" >&2
+            exit 1
+          fi
           sha="${DISPATCH_SHA:-${INPUT_SHA:-}}"
           {
             printf 'repo=%s\n' "${repo}"
