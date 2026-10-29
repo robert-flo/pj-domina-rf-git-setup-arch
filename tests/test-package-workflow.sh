@@ -253,9 +253,40 @@ resolved="$(run_resolve "$resolve_script" INPUT_REPO='robert-flo/pj-domina-rf-gi
   die "workflow_dispatch con defaults resolvio '$resolved', esperaba la fuente con owner"
 check_ownerful "$TEST_ROOT/resolve-output" 'dispatch con defaults'
 
-# repository_dispatch manda su propio repo y el paso no lo toca.
-resolved="$(run_resolve "$resolve_script" DISPATCH_REPO='octocat/otra-fuente')"
-[[ $resolved == 'octocat/otra-fuente' ]] || die "repository_dispatch altero el repo despachado: $resolved"
+# Guardia del repo fuente: este paquete solo empaqueta la fuente del
+# dúo. Un dispatch con otra fuente muere en el paso de resolve con
+# mensaje claro, no al final en package() (run 40795555679: un
+# workflow_dispatch a mano empaquetó el árbol de ravn-home-common-arch
+# y murió con exit 4 en package(); el payload sin owner del run
+# 40778999252 también entra aquí). Vale para repository_dispatch y
+# para workflow_dispatch.
+bad_out="$TEST_ROOT/resolve-bad"
+guard_fails() { # guard_fails <env=valor> <cadena-que-debe-aparecer>
+  : > "$bad_out"
+  # run_resolve devuelve el rc de su printf, no el del script: el veredicto
+  # sale de la salida. Rechazar es morir ANTES de escribir GITHUB_OUTPUT.
+  run_resolve "$resolve_script" "$1" >"$bad_out" 2>&1 || true
+  grep -q "$2" "$bad_out" \
+    || die "el guardia no nombra la fuente rechazada ($1)"
+  if grep -q '^repo=' "$bad_out"; then
+    die "el paso de resolve siguio tras rechazar la fuente ($1)"
+  fi
+}
+guard_fails 'DISPATCH_REPO=robert-flo/ravn-home-common-arch' 'ravn-home-common-arch'
+guard_fails 'DISPATCH_REPO=pj-domina-rf-git-setup' 'solo empaqueta'
+guard_fails 'INPUT_REPO=robert-flo/ravn-home-common-arch' 'ravn-home-common-arch'
+
+# Mutación: sin la guardia, la fuente ajena llega hasta makepkg y el
+# run muere lejos (package() con exit 4). Retirar el bloque del if
+# debe dejar pasar el repo ajeno.
+resolve_noguard="$TEST_ROOT/resolve-noguard.sh"
+awk '/^ *if \[\[ \$repo != / { skip = 1; next } skip && /^ *fi$/ { skip = 0; next } !skip' \
+  "$resolve_script" > "$resolve_noguard"
+grep -q 'repositorio fuente inesperado' "$resolve_noguard" \
+  && die 'la mutación no retiro la guardia del repo fuente'
+bash -n "$resolve_noguard" || die 'la mutación dejo el script de resolve inválido'
+resolved="$(run_resolve "$resolve_noguard" DISPATCH_REPO='robert-flo/ravn-home-common-arch')"
+[[ $resolved == 'robert-flo/ravn-home-common-arch' ]] || die "la mutación no reproduce la fuga: $resolved"
 
 # repository_dispatch sin payload: cae al default derivado, con owner.
 resolved="$(run_resolve "$resolve_script")"
